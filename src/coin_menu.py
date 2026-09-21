@@ -1,7 +1,7 @@
 """Shared coins.csv loader and numbered coin prompt.
 
 Used by Demo increment, Analyst backfill, and later chart scripts.
-Row order in src_v3/coins.csv is prompt order.
+Row order in src/coins.csv is prompt order.
 """
 
 from __future__ import annotations
