@@ -1,14 +1,14 @@
 """CoinGecko Analyst hourly fetcher.
 
-File: src_v3/analyst_get_hourly_data.py
+File: src/analyst_get_hourly_data.py
 
-Longer-range sibling of src_v3/demo_get_hourly_data_increments.py.
+Longer-range sibling of src/demo_get_hourly_data.py.
 Same hourly schema and cache path; this script never writes daily CSVs.
 
-Coin pick comes from src_v3/coin_menu.py + src_v3/coins.csv.
+Coin pick comes from src/coin_menu.py + src/coins.csv.
 
 On disk (hourly only):
-    src_v3/cg_data/{SYMBOL}_data_hourly.csv
+    src/cg_data/{SYMBOL}_data_hourly.csv
         hourly snapshots: time, price, volume
 
 volume is CoinGecko's sliding 24h sum, not session volume.
@@ -248,13 +248,13 @@ def fetch_hourly_range(symbol: str, start: datetime, end: datetime) -> pd.DataFr
     return _naive_utc_index(frame)
 
 
-def _chunk_windows(start: datetime, end: datetime) -> list[tuple[datetime, datetime]]:
+def _chunk_windows(start: datetime, end: datetime) -> list:
     start = _as_utc(start)
     end = _as_utc(end)
     if end <= start:
         return []
 
-    windows: list[tuple[datetime, datetime]] = []
+    windows = []
     cursor = start
     chunk = timedelta(days=CHUNK_DAYS)
     while cursor < end:
@@ -267,26 +267,12 @@ def _chunk_windows(start: datetime, end: datetime) -> list[tuple[datetime, datet
     return windows
 
 
-def fetch_hourly_chunks(
-    symbol: str,
-    start: datetime,
-    end: datetime,
-    cached: pd.DataFrame | None = None,
-) -> pd.DataFrame:
-    """Fetch start→end in CHUNK_DAYS windows and merge onto cached rows."""
-    combined = (
-        cached.copy()
-        if cached is not None and not cached.empty
-        else pd.DataFrame(columns=["price", "volume"])
-    )
+def fetch_hourly_chunks(symbol: str, start: datetime, end: datetime, cached=None):
+    combined = cached.copy() if cached is not None and not cached.empty else pd.DataFrame(columns=["price", "volume"])
     windows = _chunk_windows(start, end)
     total = len(windows)
     for i, (win_start, win_end) in enumerate(windows, start=1):
-        print(
-            f"  chunk {i}/{total}  "
-            f"{win_start.strftime('%Y-%m-%d %H:%M')} → "
-            f"{win_end.strftime('%Y-%m-%d %H:%M')} UTC"
-        )
+        print(f"  chunk {i}/{total}  {win_start.strftime('%Y-%m-%d %H:%M')} → {win_end.strftime('%Y-%m-%d %H:%M')} UTC")
         fresh = fetch_hourly_range(symbol, win_start, win_end)
         if not fresh.empty:
             if combined.empty:
@@ -304,35 +290,25 @@ def fetch_hourly_chunks(
     return combined
 
 
-def _plan_window(cached: pd.DataFrame) -> tuple[str, datetime, datetime]:
-    """Decide seed / increment / current / stale against latest UTC midnight."""
+def _plan_window(cached):
     utc0 = latest_utc_midnight()
     seed_start = utc0 - timedelta(days=LOOKBACK_DAYS)
-
     if cached.empty:
         return "seed", seed_start, utc0
-
     latest = cached.index.max()
     if not isinstance(latest, datetime):
         latest = pd.Timestamp(latest).to_pydatetime()
     latest_utc = _as_utc(latest)
-
-    gap = utc0 - latest_utc
-    gap_days = gap.total_seconds() / 86400
-
+    gap_days = (utc0 - latest_utc).total_seconds() / 86400
     if gap_days <= 0:
         return "current", utc0, utc0
-
     if gap_days > LOOKBACK_DAYS:
-        latest_txt = latest_utc.strftime("%Y-%m-%d %H:%M UTC")
-        need_txt = utc0.strftime("%Y-%m-%d %H:%M UTC")
         raise CacheTooStaleError(
             f"Cache is {gap_days:.1f} days behind "
-            f"(latest {latest_txt}, need through {need_txt}). "
+            f"(latest {latest_utc.strftime('%Y-%m-%d %H:%M UTC')}, need through {utc0.strftime('%Y-%m-%d %H:%M UTC')}). "
             f"analyst_get_hourly_data.py only fills up to {LOOKBACK_DAYS} days. "
             "Raise LOOKBACK_DAYS or delete the hourly CSV to re-seed."
         )
-
     start = latest_utc - OVERLAP
     min_start = utc0 - timedelta(days=MIN_FETCH_DAYS)
     if start > min_start:
@@ -340,46 +316,29 @@ def _plan_window(cached: pd.DataFrame) -> tuple[str, datetime, datetime]:
     return "increment", start, utc0
 
 
-def get_hourly_data(symbol: str = DEFAULT_SYMBOL) -> pd.DataFrame:
-    """Update the hourly cache if needed and return the hourly snapshots."""
+def get_hourly_data(symbol: str = DEFAULT_SYMBOL):
     validate_config()
     analyst_api_key()
     symbol = symbol.strip().upper()
     cached = load_hourly(symbol)
     action, start, end = _plan_window(cached)
-
     if action == "current":
-        print(
-            f"{symbol} hourly cache is current through {end.strftime('%Y-%m-%d %H:%M UTC')} "
-            f"({len(cached)} hourly rows)."
-        )
+        print(f"{symbol} hourly cache is current through {end.strftime('%Y-%m-%d %H:%M UTC')} ({len(cached)} hourly rows).")
         combined = cached
     else:
         if action == "seed":
-            print(
-                f"No {symbol} hourly cache. Seeding {LOOKBACK_DAYS} days "
-                f"{start.strftime('%Y-%m-%d')} → {end.strftime('%Y-%m-%d')} UTC."
-            )
+            print(f"No {symbol} hourly cache. Seeding {LOOKBACK_DAYS} days {start.strftime('%Y-%m-%d')} → {end.strftime('%Y-%m-%d')} UTC.")
         else:
-            print(
-                f"{symbol} hourly fill "
-                f"{start.strftime('%Y-%m-%d %H:%M')} → {end.strftime('%Y-%m-%d %H:%M')} UTC."
-            )
-
+            print(f"{symbol} hourly fill {start.strftime('%Y-%m-%d %H:%M')} → {end.strftime('%Y-%m-%d %H:%M')} UTC.")
         combined = fetch_hourly_chunks(symbol, start, end, cached)
         if combined.empty:
             raise RuntimeError(f"CoinGecko returned no hourly prices for {symbol}")
-
     hourly_path = save_hourly(combined, symbol)
-    print(
-        f"Saved {len(combined)} hourly rows → {hourly_path}\n"
-        f"Hourly range: {combined.index.min()} → {combined.index.max()}"
-    )
+    print(f"Saved {len(combined)} hourly rows → {hourly_path}\nHourly range: {combined.index.min()} → {combined.index.max()}")
     return combined
 
 
-def get_hourly(symbol: str = DEFAULT_SYMBOL) -> pd.DataFrame:
-    """Update if needed, then return the hourly snapshot cache."""
+def get_hourly(symbol: str = DEFAULT_SYMBOL):
     return get_hourly_data(symbol)
 
 
