@@ -1,15 +1,15 @@
 """CoinGecko Demo daily increment fetcher.
 
-File: src_v3/demo_get_daily_data.py
+File: src/demo_get_daily_data.py
 
-Daily-only sibling of src_v3/demo_get_hourly_data.py.
+Daily-only sibling of src/demo_get_hourly_data.py.
 Does not read or write hourly CSVs.
 Merges onto the existing daily file instead of rebuilding it.
 
-Coin pick comes from src_v3/coin_menu.py + src_v3/coins.csv.
+Coin pick comes from src/coin_menu.py + src/coins.csv.
 
 On disk:
-    src_v3/cg_data/{SYMBOL}_data_daily.csv
+    src/cg_data/{SYMBOL}_data_daily.csv
         time, open, high, low, close, volumeto
 
 Rules:
