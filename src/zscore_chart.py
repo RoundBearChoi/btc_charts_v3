@@ -31,7 +31,7 @@ from analyst_get_daily_data import daily_cache_path, load_daily
 from coin_menu import get_coin_choice
 
 # ====================== CONFIG ======================
-DAYS_BACK = None
+DAYS_BACK = (360 * 9) + 280
 BLOCK_WINDOW = True
 SHOW_GRID = True
 LOG_SCALE = False
