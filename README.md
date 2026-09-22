@@ -1,7 +1,5 @@
 # btc_charts_v3
 
-## Install
-
 Python 3.10 or newer.
 
 ```bash
