@@ -1,24 +1,5 @@
 # btc_charts_v3
 
-CoinGecko price fetchers and cache-only charts.
-
-v3 splits hourly and daily into separate scripts, writes a shared `src/cg_data/` cache, and keeps Demo keys off the Analyst / Pro host. Charts never download; they only read files already on disk.
-
-## Layout
-
-```
-src/
-  coins.csv                     # menu order + tickers
-  coin_menu.py                  # numbered prompt + ALL
-  analyst_get_hourly_data.py    # long hourly seed / increment (Pro host)
-  analyst_get_daily_data.py     # full daily history (Pro host)
-  demo_get_hourly_data.py       # short hourly increment (public Demo host)
-  demo_get_daily_data.py        # short daily increment (public Demo host)
-  rsi_vs_halving.py             # monthly RSI vs Bitcoin halvings (BTC daily)
-  resistance_and_support.py     # MA roles + swings + RSI (hourly → daily OHLC)
-  cg_data/                      # generated caches (gitignored)
-```
-
 ## Install
 
 Python 3.10 or newer.
