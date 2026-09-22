@@ -14,12 +14,14 @@ On disk:
 volume is CoinGecko's sliding 24h sum, not session volume.
 
 Rules:
-    - No cache -> seed latest UTC midnight back LOOKBACK_DAYS.
+    - No cache -> seed latest UTC hour back LOOKBACK_DAYS.
     - Cache gap <= LOOKBACK_DAYS -> fetch the missing tail and merge.
     - Cache gap  > LOOKBACK_DAYS -> error (run analyst_get_hourly_data.py).
     - Existing short caches are not backfilled behind the earliest row.
     - Demo auto-granularity is hourly only inside 2-90 days, so
       LOOKBACK_DAYS must stay <= 90.
+    - Fetch end is the last UTC o'clock (HH:00), not UTC midnight.
+      Daily scripts still stop at 00:00 UTC.
 
 Env:
     COINGECKO_DEMO_API_KEY   Demo API key only (export in ~/.bashrc).
@@ -66,7 +68,7 @@ OVERLAP = timedelta(hours=OVERLAP_HOURS)
 
 
 class CacheTooStaleError(RuntimeError):
-    """Existing cache is more than LOOKBACK_DAYS behind UTC midnight."""
+    """Existing cache is more than LOOKBACK_DAYS behind the last UTC hour."""
 
 
 def validate_config() -> None:
@@ -84,13 +86,14 @@ def validate_config() -> None:
         raise ValueError(f"OVERLAP_HOURS must be >= 0, got {OVERLAP_HOURS}")
 
 
-def latest_utc_midnight(now: datetime | None = None) -> datetime:
+def latest_utc_hour(now: datetime | None = None) -> datetime:
+    """Most recent UTC o'clock (HH:00) that has already started."""
     current = now or datetime.now(timezone.utc)
     if current.tzinfo is None:
         current = current.replace(tzinfo=timezone.utc)
     else:
         current = current.astimezone(timezone.utc)
-    return current.replace(minute=0, second=0, microsecond=0, hour=0)
+    return current.replace(minute=0, second=0, microsecond=0)
 
 
 def gecko_id_for(symbol: str) -> str:
@@ -160,7 +163,7 @@ def save_hourly(df: pd.DataFrame, symbol: str = DEFAULT_SYMBOL) -> Path:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     path = hourly_cache_path(symbol)
     out = _naive_utc_index(df)
-    out = out[~out.index.duplicated(keep="last")]
+    out = out[~out.index.duplicated(keep="last")].sort_index()
     out[["price", "volume"]].to_csv(path)
     legacy = _legacy_hourly_path(symbol)
     if legacy.exists() and legacy != path:
@@ -238,29 +241,29 @@ def fetch_hourly_range(symbol: str, start: datetime, end: datetime) -> pd.DataFr
 
 
 def _plan_window(cached: pd.DataFrame):
-    utc0 = latest_utc_midnight()
-    seed_start = utc0 - timedelta(days=LOOKBACK_DAYS)
+    end = latest_utc_hour()
+    seed_start = end - timedelta(days=LOOKBACK_DAYS)
     if cached.empty:
-        return "seed", seed_start, utc0
+        return "seed", seed_start, end
     latest = cached.index.max()
     if not isinstance(latest, datetime):
         latest = pd.Timestamp(latest).to_pydatetime()
     latest_utc = _as_utc(latest)
-    gap_days = (utc0 - latest_utc).total_seconds() / 86400
+    gap_days = (end - latest_utc).total_seconds() / 86400
     if gap_days <= 0:
-        return "current", utc0, utc0
+        return "current", end, end
     if gap_days > LOOKBACK_DAYS:
         raise CacheTooStaleError(
             f"Hourly cache is {gap_days:.1f} days behind "
-            f"(latest {latest_utc.strftime('%Y-%m-%d %H:%M UTC')}, need through {utc0.strftime('%Y-%m-%d %H:%M UTC')}). "
+            f"(latest {latest_utc.strftime('%Y-%m-%d %H:%M UTC')}, need through {end.strftime('%Y-%m-%d %H:%M UTC')}). "
             f"demo_get_hourly_data.py only fills up to {LOOKBACK_DAYS} days. "
             "Run analyst_get_hourly_data.py first."
         )
     start = latest_utc - OVERLAP
-    min_start = utc0 - timedelta(days=MIN_FETCH_DAYS)
+    min_start = end - timedelta(days=MIN_FETCH_DAYS)
     if start > min_start:
         start = min_start
-    return "increment", start, utc0
+    return "increment", start, end
 
 
 def get_hourly_data(symbol: str = DEFAULT_SYMBOL) -> pd.DataFrame:
@@ -274,7 +277,7 @@ def get_hourly_data(symbol: str = DEFAULT_SYMBOL) -> pd.DataFrame:
         combined = cached
     else:
         if action == "seed":
-            print(f"No {symbol} hourly cache. Seeding {LOOKBACK_DAYS} days {start.strftime('%Y-%m-%d')} → {end.strftime('%Y-%m-%d')} UTC.")
+            print(f"No {symbol} hourly cache. Seeding {LOOKBACK_DAYS} days {start.strftime('%Y-%m-%d %H:%M')} → {end.strftime('%Y-%m-%d %H:%M')} UTC.")
         else:
             print(f"{symbol} hourly fill {start.strftime('%Y-%m-%d %H:%M')} → {end.strftime('%Y-%m-%d %H:%M')} UTC.")
         fresh = fetch_hourly_range(symbol, start, end)
