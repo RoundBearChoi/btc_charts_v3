@@ -24,6 +24,9 @@ from analyst_get_daily_data import daily_cache_path, load_daily
 
 # ========================== CONFIG ==========================
 AXIS_START = pandas.Timestamp("2013-04-28")
+# Major ticks land on the 28th of Apr / Jul / Oct / Jan
+AXIS_TICK_MONTHS = (4, 7, 10, 1)
+AXIS_TICK_DAY = 28
 
 # Configuration for the thin vertical cycle-progress lines
 CYCLE_PROGRESS_LINES = {
@@ -100,7 +103,7 @@ def _require_cached_btc_daily() -> pandas.DataFrame:
 def draw(block_window):
     data_frame = _require_cached_btc_daily()
 
-    plt.figure(figsize=(12, 6))
+    plt.figure(figsize=(14, 6))
 
     plt.style.use("fast")
     plt.grid(False)
@@ -179,10 +182,13 @@ def __plot(data_frame, block_window):
     plt.xlim(axis_start, axis_end)
 
     ax = plt.gca()
-    ax.xaxis.set_major_locator(mdates.YearLocator(month=4, day=28))
-    ax.xaxis.set_minor_locator(mdates.YearLocator())
+    ax.xaxis.set_major_locator(
+        mdates.MonthLocator(bymonth=AXIS_TICK_MONTHS, bymonthday=AXIS_TICK_DAY)
+    )
+    ax.xaxis.set_minor_locator(mdates.MonthLocator())
     ax.xaxis.set_major_formatter(ticker.FuncFormatter(_month_year_label))
-    ax.tick_params(axis="x", which="major", labelsize=9)
+    ax.tick_params(axis="x", which="major", labelsize=8)
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
     plt.xlabel("Date")
 
     # plot RSI (original color-by-months-to-halving logic)
