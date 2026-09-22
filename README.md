@@ -28,9 +28,14 @@ python demo_get_hourly_data.py
 python demo_get_daily_data.py
 
 python rsi_vs_halving.py
+python resistance_and_support.py
 ```
 
-`rsi_vs_halving.py` only reads `src/cg_data/BTC_data_daily.csv`. It does not download.
+`rsi_vs_halving.py` only reads `src/cg_data/BTC_data_daily.csv`.
 Seed that file with `analyst_get_daily_data.py` first.
+
+`resistance_and_support.py` only reads `src/cg_data/{SYMBOL}_data_hourly.csv`.
+Seed those files with `analyst_get_hourly_data.py` first (about four years).
+It resamples hourly snapshots to daily OHLC and does not download.
 
 Caches land in `src/cg_data/` and are gitignored.
