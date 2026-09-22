@@ -145,6 +145,20 @@ def format_ratio(value: float) -> str:
     return f"{value:.6f}"
 
 
+def format_month_year(x, _p=None) -> str:
+    """Tick label like 'Sep 2026'."""
+    return mdates.num2date(x).strftime("%b %Y")
+
+
+def add_quarter_date_formatters(ax) -> None:
+    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
+    ax.xaxis.set_minor_locator(mdates.MonthLocator())
+    ax.xaxis.set_major_formatter(ticker.FuncFormatter(format_month_year))
+    ax.tick_params(axis="x", which="major", labelsize=8, rotation=30)
+    for label in ax.get_xticklabels():
+        label.set_horizontalalignment("right")
+
+
 def print_snapshot(
     df: pd.DataFrame,
     base_name: str,
@@ -244,9 +258,10 @@ def draw_one_chart(
     if SHOW_GRID:
         ax_bot.grid(True, alpha=0.3)
 
-    ax_bot.xaxis.set_major_locator(mdates.AutoDateLocator())
-    ax_bot.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
-    fig.autofmt_xdate(rotation=30, ha="right")
+    add_quarter_date_formatters(ax_top)
+    add_quarter_date_formatters(ax_bot)
+    plt.setp(ax_top.get_xticklabels(), visible=False)
+    ax_top.tick_params(axis="x", labelbottom=False)
     fig.tight_layout()
 
     if not _backend_is_interactive():
