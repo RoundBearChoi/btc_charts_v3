@@ -38,7 +38,7 @@ from analyst_get_hourly_data import hourly_cache_path, load_hourly
 from coin_menu import get_coin_choice
 
 # ====================== CONFIG ======================
-DAYS_BACK = None           # None = full hourly cache (~4 years on Analyst)
+DAYS_BACK = 360           # None = full hourly cache (~4 years on Analyst)
 BLOCK_WINDOW = True
 SHOW_GRID = True
 LOG_SCALE = False
