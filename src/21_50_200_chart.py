@@ -33,7 +33,7 @@ from coin_menu import get_coin_choice
 # CONFIGURATION
 # ==================================================
 LOG_SCALE = False
-DAYS_BACK = 360 * 6
+DAYS_BACK = 360 * 5
 BLOCK_WINDOW = True
 SHOW_GRID = True
 
