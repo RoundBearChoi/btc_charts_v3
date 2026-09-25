@@ -11,12 +11,15 @@ like hourly volume. Color is green when that hour's price is >= the
 previous hour, red otherwise.
 
 The visible window is the last HOURS_BACK hours of the cache (from the
-latest cached timestamp), not wall-clock now.
+latest cached timestamp), not wall-clock now. Cache timestamps stay
+naive UTC; the chart and snapshot print in DISPLAY_TZ (Asia/Seoul).
 
 Startup prompt is 1..N from coins.csv, plus ALL.
 """
 
 from __future__ import annotations
+
+from zoneinfo import ZoneInfo
 
 import matplotlib
 
@@ -39,6 +42,10 @@ BLOCK_WINDOW = True
 SHOW_GRID = True
 FIGURE_SIZE = (14, 8)
 HEIGHT_RATIOS = (3, 1)
+
+# Cache stays naive UTC. Convert only for the chart + snapshot.
+DISPLAY_TZ = ZoneInfo("Asia/Seoul")
+DISPLAY_TZ_LABEL = "KST (UTC+9)"
 
 CLOSE_COLOR = "#9EB3DB"
 CLOSE_WIDTH = 1.4
@@ -83,6 +90,29 @@ def format_volume(value: float) -> str:
     return f"${value:,.0f}"
 
 
+def to_display_tz(df: pd.DataFrame) -> pd.DataFrame:
+    """Naive cache index is UTC. Return a copy labeled in DISPLAY_TZ."""
+    out = df.copy()
+    idx = pd.to_datetime(out.index)
+    if getattr(idx, "tz", None) is None:
+        idx = idx.tz_localize("UTC")
+    else:
+        idx = idx.tz_convert("UTC")
+    out.index = idx.tz_convert(DISPLAY_TZ)
+    out.index.name = df.index.name
+    return out
+
+
+def format_ts(ts) -> str:
+    """Format a cache or plot timestamp in DISPLAY_TZ."""
+    t = pd.Timestamp(ts)
+    if t.tzinfo is None:
+        t = t.tz_localize("UTC").tz_convert(DISPLAY_TZ)
+    else:
+        t = t.tz_convert(DISPLAY_TZ)
+    return t.strftime("%Y-%m-%d %H:%M %Z")
+
+
 def apply_grid(ax) -> None:
     if not SHOW_GRID:
         ax.grid(False)
@@ -97,9 +127,9 @@ def apply_grid(ax) -> None:
 
 
 def add_hour_date_formatters(ax) -> None:
-    ax.xaxis.set_major_locator(mdates.HourLocator(interval=6))
-    ax.xaxis.set_minor_locator(mdates.HourLocator(interval=1))
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d %H:%M"))
+    ax.xaxis.set_major_locator(mdates.HourLocator(interval=6, tz=DISPLAY_TZ))
+    ax.xaxis.set_minor_locator(mdates.HourLocator(interval=1, tz=DISPLAY_TZ))
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d %H:%M", tz=DISPLAY_TZ))
     ax.tick_params(axis="x", which="major", labelsize=8, rotation=30)
     for label in ax.get_xticklabels():
         label.set_horizontalalignment("right")
@@ -119,7 +149,7 @@ def _require_hourly(symbol: str) -> pd.DataFrame:
         raise ValueError(f"{path} has no usable prices.")
     print(
         f"Using cached {symbol} hourly: {raw.index.min()} → "
-        f"{raw.index.max()} ({len(raw)} rows)\n  {path}"
+        f"{raw.index.max()} UTC ({len(raw)} rows)\n  {path}"
     )
     return raw
 
@@ -149,8 +179,11 @@ def print_snapshot(df: pd.DataFrame, coin_name: str, coin_ticker: str) -> None:
     print("=" * 64)
     print(f"{coin_name} ({coin_ticker})  last {HOURS_BACK}h volume snapshot")
     print("=" * 64)
-    print(f"Latest price:    {format_price(price)}   ({df.index[-1]})")
-    print(f"Window:          {df.index[0]} → {df.index[-1]}  ({len(df)} hours)")
+    print(f"Latest price:    {format_price(price)}   ({format_ts(df.index[-1])})")
+    print(
+        f"Window:          {format_ts(df.index[0])} → "
+        f"{format_ts(df.index[-1])}  ({len(df)} hours)"
+    )
     print(f"Window change:   {format_price(change)}  ({pct:+.2f}%)")
     print(f"Last 1h vol:     {format_volume(last_vol)}")
     print(f"Peak 1h vol:     {format_volume(peak_vol)}")
@@ -184,6 +217,7 @@ def draw_one_chart(
     if df.empty:
         raise ValueError(f"{coin_ticker} has no rows in the last {HOURS_BACK} hours of cache.")
 
+    df = to_display_tz(df)
     print_snapshot(df, coin_name, coin_ticker)
 
     fig, (ax1, ax2) = plt.subplots(
@@ -235,7 +269,7 @@ def draw_one_chart(
         )
 
     ax2.set_ylabel("Approx. 1h Volume (USD)")
-    ax2.set_xlabel("Time (UTC)")
+    ax2.set_xlabel(f"Time ({DISPLAY_TZ_LABEL})")
     apply_grid(ax2)
     ax2.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _p: format_volume(x)))
 
