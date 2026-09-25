@@ -45,7 +45,7 @@ HEIGHT_RATIOS = (3, 1)
 
 # Cache stays naive UTC. Convert only for the chart + snapshot.
 DISPLAY_TZ = ZoneInfo("Asia/Seoul")
-DISPLAY_TZ_LABEL = "KST (UTC+9)"
+DISPLAY_TZ_LABEL = "KST UTC+9"
 
 CLOSE_COLOR = "#9EB3DB"
 CLOSE_WIDTH = 1.4
@@ -269,7 +269,7 @@ def draw_one_chart(
         )
 
     ax2.set_ylabel("Approx. 1h Volume (USD)")
-    ax2.set_xlabel(f"Time ({DISPLAY_TZ_LABEL})")
+    ax2.set_xlabel(f"{DISPLAY_TZ_LABEL}")
     apply_grid(ax2)
     ax2.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _p: format_volume(x)))
 
