@@ -8,6 +8,8 @@ Seed that with analyst_get_daily_data.py first.
 Indicators are computed on the full cache, then the visible window is
 the last DAYS_BACK rows so SMA200 is seeded when history exists.
 
+RSI panel includes a short EMA of RSI(14). Price is not smoothed before RSI.
+
 Startup prompt is 1..N from coins.csv, plus ALL.
 """
 
@@ -50,6 +52,7 @@ FIGURE_SIZE = (14, 10)
 HEIGHT_RATIOS = (3, 1, 1)
 
 RSI_WINDOW = 14
+RSI_MA_DAYS = 9
 RSI_OVERBOUGHT = 70
 RSI_OVERSOLD = 30
 
@@ -71,6 +74,8 @@ VOLUME_SMA_DAYS = 15
 VOLUME_SMA_COLOR = "#263549"
 CLOUD_UP_COLOR = "#00D118"
 CLOUD_DOWN_COLOR = "#C80C01"
+RSI_COLOR = "#FF9900"
+RSI_MA_COLOR = "#9467bd"
 
 CROSS_MARKER_SIZE = 36
 FAST_GOLDEN_CROSS_COLOR = "#00D118"
@@ -166,6 +171,15 @@ def add_rsi(df: pd.DataFrame, window: int = 14, price_col: str = "close", out_co
     return df
 
 
+def add_rsi_ema(rsi: pd.Series, span: int = RSI_MA_DAYS) -> pd.Series:
+    """Recursive EMA of RSI. Does not recompute RSI on smoothed price."""
+    return rsi.ewm(
+        span=span,
+        min_periods=max(5, span // 2),
+        adjust=False,
+    ).mean()
+
+
 def last_crossover(fast: pd.Series, slow: pd.Series) -> tuple[pd.Timestamp | None, str | None]:
     aligned = pd.concat({"fast": fast, "slow": slow}, axis=1).dropna()
     if len(aligned) < 2:
@@ -195,12 +209,12 @@ def _regime_label(price: float, ema_fast: float, sma_mid: float, sma_slow: float
     above_slow = price >= sma_slow
     fast_above_mid = ema_fast >= sma_mid
     if above_slow and fast_above_mid:
-        return f"risk-on (above {SMA_SLOW} · {EMA_FAST}>{SMA_MID})"
+        return f"risk-on (above {SMA_SLOW} \u00b7 {EMA_FAST}>{SMA_MID})"
     if above_slow:
-        return f"above {SMA_SLOW} · {EMA_FAST}<{SMA_MID}"
+        return f"above {SMA_SLOW} \u00b7 {EMA_FAST}<{SMA_MID}"
     if fast_above_mid:
-        return f"below {SMA_SLOW} · {EMA_FAST}>{SMA_MID}"
-    return f"defensive (below {SMA_SLOW} · {EMA_FAST}<{SMA_MID})"
+        return f"below {SMA_SLOW} \u00b7 {EMA_FAST}>{SMA_MID}"
+    return f"defensive (below {SMA_SLOW} \u00b7 {EMA_FAST}<{SMA_MID})"
 
 
 def _format_cross(ts, direction: str | None) -> str:
@@ -220,12 +234,13 @@ def print_snapshot(df: pd.DataFrame, coin_name: str, coin_ticker: str, rsi_windo
     mid = float(last[mid_col]) if pd.notna(last[mid_col]) else float("nan")
     slow = float(last[slow_col]) if pd.notna(last[slow_col]) else float("nan")
     rsi = float(last["RSI"]) if pd.notna(last["RSI"]) else float("nan")
+    rsi_ema = float(last["RSI_EMA"]) if pd.notna(last["RSI_EMA"]) else float("nan")
 
     print("=" * 64)
     print(f"{coin_name} ({coin_ticker})  {EMA_FAST}/{SMA_MID}/{SMA_SLOW} snapshot")
     print("=" * 64)
     print(f"Latest close:    {format_price(price)}   ({df.index[-1].date()})")
-    print(f"Range:           {df.index[0].date()} → {df.index[-1].date()}  ({len(df)} days)")
+    print(f"Range:           {df.index[0].date()} \u2192 {df.index[-1].date()}  ({len(df)} days)")
     print(f"Regime:          {_regime_label(price, ema, mid, slow)}")
     print()
     print(f"{'MA':<10}{'Value':>14}{'vs close':>12}")
@@ -235,7 +250,9 @@ def print_snapshot(df: pd.DataFrame, coin_name: str, coin_ticker: str, rsi_windo
     print(f"{'SMA' + str(SMA_SLOW):<10}{format_price(slow):>14}{_pct_from(price, slow):>12}")
     print()
     rsi_txt = f"{rsi:.1f}" if pd.notna(rsi) else "n/a"
+    rsi_ema_txt = f"{rsi_ema:.1f}" if pd.notna(rsi_ema) else "n/a"
     print(f"RSI({rsi_window}):       {rsi_txt}")
+    print(f"RSI {RSI_MA_DAYS}d EMA:     {rsi_ema_txt}")
     print(f"Last {EMA_FAST}/{SMA_MID} cross:  {_format_cross(*last_crossover(df[ema_col], df[mid_col]))}")
     print(f"Last {SMA_MID}/{SMA_SLOW} cross: {_format_cross(*last_crossover(df[mid_col], df[slow_col]))}")
     print("=" * 64)
@@ -286,7 +303,7 @@ def _require_daily(symbol: str) -> pd.DataFrame:
     if raw.empty:
         raise ValueError(f"{path} has no usable close prices.")
     print(
-        f"Using cached {symbol} daily: {raw.index.min().date()} → "
+        f"Using cached {symbol} daily: {raw.index.min().date()} \u2192 "
         f"{raw.index.max().date()} ({len(raw)} rows)\n  {path}"
     )
     return raw
@@ -310,6 +327,7 @@ def draw_one_chart(
     if VOLUME_SMA_DAYS > 0 and "volumeto" in df.columns:
         df["VOLUME_SMA"] = df["volumeto"].rolling(window=VOLUME_SMA_DAYS).mean()
     df = add_rsi(df, window=RSI_WINDOW)
+    df["RSI_EMA"] = add_rsi_ema(df["RSI"], span=RSI_MA_DAYS)
 
     if DAYS_BACK is not None:
         df = df.iloc[-DAYS_BACK:]
@@ -371,14 +389,14 @@ def draw_one_chart(
     regime = _regime_label(price, ema, mid, slow)
 
     title = (
-        f"{coin_name} • {EMA_FAST} EMA vs {SMA_MID} SMA + {SMA_SLOW} SMA "
+        f"{coin_name} \u2022 {EMA_FAST} EMA vs {SMA_MID} SMA + {SMA_SLOW} SMA "
         f"+ Volume + RSI({RSI_WINDOW})"
     )
     if LOG_SCALE:
         ax1.set_yscale("log")
         title += " (LOG)"
     if DAYS_BACK:
-        title += f" — Last {DAYS_BACK} days"
+        title += f" \u2014 Last {DAYS_BACK} days"
     title += f"\n{regime}"
     ax1.set_title(title, fontsize=13, pad=16)
     ax1.set_ylabel("Price (USD)")
@@ -388,13 +406,20 @@ def draw_one_chart(
 
     if SHOW_LAST_LABELS:
         rsi_val = float(last["RSI"]) if pd.notna(last["RSI"]) else float("nan")
+        rsi_ema_val = float(last["RSI_EMA"]) if pd.notna(last["RSI_EMA"]) else float("nan")
         rsi_line = f"RSI({RSI_WINDOW}) {rsi_val:.1f}" if pd.notna(rsi_val) else f"RSI({RSI_WINDOW}) n/a"
+        rsi_ema_line = (
+            f"RSI EMA{RSI_MA_DAYS} {rsi_ema_val:.1f}"
+            if pd.notna(rsi_ema_val)
+            else f"RSI EMA{RSI_MA_DAYS} n/a"
+        )
         box = (
             f"Close  {format_price(price)}\n"
             f"EMA{EMA_FAST}  {format_price(ema)}  ({_pct_from(price, ema)})\n"
             f"SMA{SMA_MID}  {format_price(mid)}  ({_pct_from(price, mid)})\n"
             f"SMA{SMA_SLOW} {format_price(slow)}  ({_pct_from(price, slow)})\n"
-            f"{rsi_line}"
+            f"{rsi_line}\n"
+            f"{rsi_ema_line}"
         )
         ax1.text(
             0.99, 0.02, box,
@@ -433,7 +458,16 @@ def draw_one_chart(
     if SHOW_RSI_ZONES:
         ax3.axhspan(RSI_OVERBOUGHT, 100, color="#E15FC3", alpha=0.08, zorder=0)
         ax3.axhspan(0, RSI_OVERSOLD, color="#00D118", alpha=0.08, zorder=0)
-    ax3.plot(df.index, df["RSI"], color="#FF9900", linewidth=1.5, label=f"RSI({RSI_WINDOW})")
+    ax3.plot(
+        df.index, df["RSI"],
+        color=RSI_COLOR, linewidth=1.2, alpha=0.8,
+        label=f"RSI({RSI_WINDOW})",
+    )
+    ax3.plot(
+        df.index, df["RSI_EMA"],
+        color=RSI_MA_COLOR, linewidth=1.6,
+        label=f"RSI {RSI_MA_DAYS}d EMA",
+    )
     ax3.axhline(RSI_OVERBOUGHT, color="#E15FC3", linestyle="--", alpha=0.6, label="Overbought")
     ax3.axhline(RSI_OVERSOLD, color="#00D118", linestyle="--", alpha=0.6, label="Oversold")
     ax3.axhline(50, color="gray", linestyle=":", alpha=0.5)
@@ -482,7 +516,7 @@ def draw(block_window: bool = BLOCK_WINDOW) -> None:
                 close_after=True,
             )
         except Exception as exc:
-            print(f"✘ {coin_name} ({coin_ticker}) failed: {exc}")
+            print(f"\u2718 {coin_name} ({coin_ticker}) failed: {exc}")
         if is_last and total > 1:
             print(f"\nDone. Stopped after last coin ({coin_name}).")
 
