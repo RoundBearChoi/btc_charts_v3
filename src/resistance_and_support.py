@@ -8,6 +8,8 @@ Hourly CoinGecko snapshots (price, volume) are resampled to UTC daily
 OHLC so swing highs/lows have an intra-day range. Seed that file with
 analyst_get_hourly_data.py (about four years) before running this chart.
 
+RSI panel includes a short EMA of RSI(14). Price is not smoothed before RSI.
+
 Rule used for moving averages:
   price above the MA  -> that MA is treated as support
   price below the MA  -> that MA is treated as resistance
@@ -51,6 +53,7 @@ SWING_LEFT = 8             # daily bars on each side to confirm a pivot
 SWING_RIGHT = 8
 
 RSI_WINDOW = 14
+RSI_MA_DAYS = 9
 RSI_OVERBOUGHT = 70
 RSI_OVERSOLD = 30
 SHOW_RSI_ZONES = True
@@ -69,6 +72,7 @@ SMA200_COLOR = "#C80C01"
 SUPPORT_COLOR = "#2ca02c"
 RESISTANCE_COLOR = "#d62728"
 RSI_COLOR = "#FF9900"
+RSI_MA_COLOR = "#9467bd"
 UNCONFIRMED_ALPHA = 0.3
 # ====================================================
 
@@ -192,6 +196,15 @@ def add_rsi(df: pd.DataFrame, window: int = 14, price_col: str = "close") -> pd.
     return df
 
 
+def add_rsi_ema(rsi: pd.Series, span: int = RSI_MA_DAYS) -> pd.Series:
+    """Recursive EMA of RSI. Does not recompute RSI on smoothed price."""
+    return rsi.ewm(
+        span=span,
+        min_periods=max(5, span // 2),
+        adjust=False,
+    ).mean()
+
+
 def add_swing_points(df: pd.DataFrame, left: int = 8, right: int = 8) -> pd.DataFrame:
     high = df["high"]
     low = df["low"]
@@ -305,6 +318,8 @@ def print_levels(df: pd.DataFrame, structure: dict, coin_name: str, coin_ticker:
     print(f"Range:           {df.index[0].date()} → {df.index[-1].date()}  ({len(df)} daily bars)")
     print(f"Structure:       {structure['label']}")
     print(f"RSI({RSI_WINDOW}):        {format_rsi(rsi)}")
+    if "RSI_EMA" in df.columns:
+        print(f"RSI {RSI_MA_DAYS}d EMA:      {format_rsi(last['RSI_EMA'])}")
     print()
     print(f"{'MA':<10}{'Value':>14}{'Role':>14}")
     print("-" * 38)
@@ -398,9 +413,16 @@ def draw_rsi(ax, df: pd.DataFrame):
         ax.axhspan(RSI_OVERBOUGHT, 100, color="#E15FC3", alpha=0.08, zorder=0)
         ax.axhspan(0, RSI_OVERSOLD, color="#00D118", alpha=0.08, zorder=0)
     ax.plot(
-        df.index, df["RSI"], color=RSI_COLOR, linewidth=1.5,
+        df.index, df["RSI"],
+        color=RSI_COLOR, linewidth=1.2, alpha=0.8,
         label=f"RSI({RSI_WINDOW})",
     )
+    if "RSI_EMA" in df.columns:
+        ax.plot(
+            df.index, df["RSI_EMA"],
+            color=RSI_MA_COLOR, linewidth=1.6,
+            label=f"RSI {RSI_MA_DAYS}d EMA",
+        )
     ax.axhline(RSI_OVERBOUGHT, color="#E15FC3", linestyle="--", alpha=0.6, label="Overbought")
     ax.axhline(RSI_OVERSOLD, color="#00D118", linestyle="--", alpha=0.6, label="Oversold")
     ax.axhline(50, color="gray", linestyle=":", alpha=0.5)
@@ -431,6 +453,7 @@ def draw_one_chart(
     df = add_sma(df, SMA_MID)
     df = add_sma(df, SMA_SLOW)
     df = add_rsi(df, window=RSI_WINDOW)
+    df["RSI_EMA"] = add_rsi_ema(df["RSI"], span=RSI_MA_DAYS)
     df = add_swing_points(df, left=SWING_LEFT, right=SWING_RIGHT)
 
     if days_back is not None:
