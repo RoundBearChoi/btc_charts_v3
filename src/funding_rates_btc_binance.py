@@ -9,7 +9,8 @@ Funding is fetched from Binance public futures (no API key) and cached at:
     src/cg_data/BTC_funding_binance.csv
 Empty or stale cache -> increment from the last row (or seed LOOKBACK_YEARS).
 
-Three panels: BTC close + SMA50/SMA111, daily avg funding, funding z-score.
+Three panels: BTC close + SMA50/SMA111, daily avg funding, funding z-score
+with a short EMA of the z-score itself.
 """
 
 from __future__ import annotations
@@ -43,6 +44,7 @@ REQUEST_PAUSE_SEC = 0.15
 SMA_FAST = 50
 SMA_SLOW = 111
 ZSCORE_WINDOW = 180
+ZSCORE_MA_DAYS = 14
 
 SHOW_ABSOLUTE_REFS = True
 ABS_MODERATE = 0.025
@@ -58,6 +60,7 @@ SMA50_COLOR = "#2ca02c"
 SMA111_COLOR = "#ff7f0e"
 FUNDING_COLOR = "#1f77b4"
 ZSCORE_COLOR = "#d62728"
+ZSCORE_MA_COLOR = "#9467bd"
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DATA_DIR = SCRIPT_DIR / "cg_data"
@@ -116,7 +119,7 @@ def fetch_binance_funding(
         try:
             resp = requests.get(BINANCE_URL, params=params, timeout=20)
             if resp.status_code == 429:
-                print("Binance 429 — sleeping 2s")
+                print("Binance 429 \u2014 sleeping 2s")
                 time.sleep(2)
                 continue
             resp.raise_for_status()
@@ -177,7 +180,7 @@ def load_or_update_funding(years: int = LOOKBACK_YEARS) -> pd.DataFrame:
         if fresh.empty:
             raise RuntimeError("Binance returned no funding rates.")
         path = save_funding_cache(fresh)
-        print(f"Saved {len(fresh)} funding rows → {path}")
+        print(f"Saved {len(fresh)} funding rows \u2192 {path}")
         return fresh
 
     latest = _as_utc(cached["timestamp"].max().to_pydatetime())
@@ -198,7 +201,7 @@ def load_or_update_funding(years: int = LOOKBACK_YEARS) -> pd.DataFrame:
     combined = combined.drop_duplicates(subset=["timestamp"]).sort_values("timestamp")
     combined = combined[combined["timestamp"] >= cutoff].reset_index(drop=True)
     path = save_funding_cache(combined)
-    print(f"Saved {len(combined)} funding rows → {path}")
+    print(f"Saved {len(combined)} funding rows \u2192 {path}")
     return combined
 
 
@@ -207,6 +210,15 @@ def add_funding_zscore(daily_series: pd.Series, window: int = ZSCORE_WINDOW) -> 
     mean = daily_series.rolling(window=window, min_periods=min_periods).mean()
     std = daily_series.rolling(window=window, min_periods=min_periods).std().replace(0, np.nan)
     return (daily_series - mean) / std
+
+
+def add_zscore_ema(zscore: pd.Series, span: int = ZSCORE_MA_DAYS) -> pd.Series:
+    """Recursive EMA of the z-score. Does not recompute z on smoothed funding."""
+    return zscore.ewm(
+        span=span,
+        min_periods=max(5, span // 2),
+        adjust=False,
+    ).mean()
 
 
 def _require_btc_daily() -> pd.DataFrame:
@@ -222,7 +234,7 @@ def _require_btc_daily() -> pd.DataFrame:
     if raw.empty:
         raise ValueError(f"{path} has no usable close prices.")
     print(
-        f"Using cached BTC daily: {raw.index.min().date()} → "
+        f"Using cached BTC daily: {raw.index.min().date()} \u2192 "
         f"{raw.index.max().date()} ({len(raw)} rows)\n  {path}"
     )
     return raw
@@ -235,12 +247,13 @@ def print_stats(df: pd.DataFrame, years: int, zscore_window: int) -> None:
     print("=" * 55)
     print(f"BTCUSDT Funding Rates + Price Context (Last {years} years)")
     print("=" * 55)
-    print(f"Period:           {df['timestamp'].min().date()} → {df['timestamp'].max().date()}")
+    print(f"Period:           {df['timestamp'].min().date()} \u2192 {df['timestamp'].max().date()}")
     print(f"# Funding prints: {len(df):,}")
     print(f"Mean / Median:    {rate_pct.mean():.5f}% / {rate_pct.median():.5f}%")
     print(f"Std / Max / Min:  {rate_pct.std():.5f}% / {rate_pct.max():.5f}% / {rate_pct.min():.5f}%")
     print(f"% Positive:       {(rate_pct > 0).mean() * 100:.1f}%")
     print(f"Z-Score window:   {zscore_window} days")
+    print(f"Z-Score EMA:      {ZSCORE_MA_DAYS} days")
     print("=" * 55)
     print()
 
@@ -260,6 +273,7 @@ def draw(
     daily_funding = funding["funding_rate"].resample("D").mean() * 100
     daily_funding.index = _naive_utc_index(daily_funding.index)
     daily_z = add_funding_zscore(daily_funding, window=zscore_window)
+    z_ma = add_zscore_ema(daily_z, span=ZSCORE_MA_DAYS)
 
     price = _require_btc_daily()
     price = price.copy()
@@ -323,12 +337,21 @@ def draw(
     if SHOW_GRID:
         ax2.grid(True, alpha=0.3)
 
-    ax3.plot(daily_funding.index, daily_z, color=ZSCORE_COLOR, linewidth=1.5, label=f"Funding Z-Score ({zscore_window}d)")
+    ax3.plot(
+        daily_funding.index, daily_z,
+        color=ZSCORE_COLOR, linewidth=1.1, alpha=0.45,
+        label=f"Funding Z-Score ({zscore_window}d)",
+    )
+    ax3.plot(
+        daily_funding.index, z_ma,
+        color=ZSCORE_MA_COLOR, linewidth=1.7,
+        label=f"{ZSCORE_MA_DAYS}d EMA",
+    )
     ax3.axhline(0, color="black", linewidth=0.9, alpha=0.8)
-    ax3.axhline(2, color="#d62728", linestyle="--", linewidth=1.2, alpha=0.85, label="+2σ")
-    ax3.axhline(-2, color="#2ca02c", linestyle="--", linewidth=1.2, alpha=0.85, label="-2σ")
-    ax3.axhline(3, color="#8B0000", linestyle=":", linewidth=1.1, alpha=0.7, label="+3σ")
-    ax3.axhline(-3, color="#006400", linestyle=":", linewidth=1.1, alpha=0.7, label="-3σ")
+    ax3.axhline(2, color="#d62728", linestyle="--", linewidth=1.2, alpha=0.85, label="+2\u03c3")
+    ax3.axhline(-2, color="#2ca02c", linestyle="--", linewidth=1.2, alpha=0.85, label="-2\u03c3")
+    ax3.axhline(3, color="#8B0000", linestyle=":", linewidth=1.1, alpha=0.7, label="+3\u03c3")
+    ax3.axhline(-3, color="#006400", linestyle=":", linewidth=1.1, alpha=0.7, label="-3\u03c3")
     ax3.set_ylabel("Z-Score")
     ax3.set_xlabel("Date")
     ax3.legend(loc="upper left", fontsize=8, framealpha=0.92)
