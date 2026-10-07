@@ -12,7 +12,8 @@ Empty or stale cache -> increment from the last row (or seed LOOKBACK_YEARS).
 HL funding prints are hourly; the chart resamples to a daily mean * 100
 the same way funding_rates_btc_binance.py does.
 
-Three panels: FARTCOIN close + SMA50/SMA111, daily avg funding, funding z-score.
+Three panels: FARTCOIN close + SMA50/SMA111, daily avg funding, funding z-score
+with a short EMA of the z-score itself.
 """
 
 from __future__ import annotations
@@ -48,6 +49,7 @@ HL_PAGE_HINT = 500
 SMA_FAST = 50
 SMA_SLOW = 111
 ZSCORE_WINDOW = 180
+ZSCORE_MA_DAYS = 14
 
 SHOW_ABSOLUTE_REFS = True
 ABS_MODERATE = 0.025
@@ -63,6 +65,7 @@ SMA50_COLOR = "#2ca02c"
 SMA111_COLOR = "#ff7f0e"
 FUNDING_COLOR = "#1f77b4"
 ZSCORE_COLOR = "#d62728"
+ZSCORE_MA_COLOR = "#9467bd"
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DATA_DIR = SCRIPT_DIR / "cg_data"
@@ -227,6 +230,15 @@ def add_funding_zscore(daily_series: pd.Series, window: int = ZSCORE_WINDOW) -> 
     return (daily_series - mean) / std
 
 
+def add_zscore_ema(zscore: pd.Series, span: int = ZSCORE_MA_DAYS) -> pd.Series:
+    """Recursive EMA of the z-score. Does not recompute z on smoothed funding."""
+    return zscore.ewm(
+        span=span,
+        min_periods=max(5, span // 2),
+        adjust=False,
+    ).mean()
+
+
 def _require_daily(symbol: str) -> pd.DataFrame:
     path = daily_cache_path(symbol)
     raw = load_daily(symbol)
@@ -259,6 +271,7 @@ def print_stats(df: pd.DataFrame, years: int, zscore_window: int) -> None:
     print(f"Std / Max / Min:  {rate_pct.std():.5f}% / {rate_pct.max():.5f}% / {rate_pct.min():.5f}%")
     print(f"% Positive:       {(rate_pct > 0).mean() * 100:.1f}%")
     print(f"Z-Score window:   {zscore_window} days")
+    print(f"Z-Score EMA:      {ZSCORE_MA_DAYS} days")
     print("=" * 60)
     print()
 
@@ -278,6 +291,7 @@ def draw(
     daily_funding = funding["funding_rate"].resample("D").mean() * 100
     daily_funding.index = _naive_utc_index(daily_funding.index)
     daily_z = add_funding_zscore(daily_funding, window=zscore_window)
+    z_ma = add_zscore_ema(daily_z, span=ZSCORE_MA_DAYS)
 
     price = _require_daily(PRICE_SYMBOL)
     price = price.copy()
@@ -345,7 +359,16 @@ def draw(
     if SHOW_GRID:
         ax2.grid(True, alpha=0.3)
 
-    ax3.plot(daily_funding.index, daily_z, color=ZSCORE_COLOR, linewidth=1.5, label=f"Funding Z-Score ({zscore_window}d)")
+    ax3.plot(
+        daily_funding.index, daily_z,
+        color=ZSCORE_COLOR, linewidth=1.1, alpha=0.45,
+        label=f"Funding Z-Score ({zscore_window}d)",
+    )
+    ax3.plot(
+        daily_funding.index, z_ma,
+        color=ZSCORE_MA_COLOR, linewidth=1.7,
+        label=f"{ZSCORE_MA_DAYS}d EMA",
+    )
     ax3.axhline(0, color="black", linewidth=0.9, alpha=0.8)
     ax3.axhline(2, color="#d62728", linestyle="--", linewidth=1.2, alpha=0.85, label="+2σ")
     ax3.axhline(-2, color="#2ca02c", linestyle="--", linewidth=1.2, alpha=0.85, label="-2σ")
