@@ -8,6 +8,8 @@ Seed that with analyst_get_daily_data.py first.
 Indicators are computed on the full cache, then the last DAYS_BACK
 rows are drawn so SMA111 is seeded.
 
+RSI panel includes a short EMA of RSI(14). Price is not smoothed before RSI.
+
 Startup prompt is 1..N from coins.csv, plus ALL.
 """
 
@@ -37,6 +39,7 @@ FIGURE_SIZE = (14, 8)
 HEIGHT_RATIOS = (3, 1)
 
 RSI_WINDOW = 14
+RSI_MA_DAYS = 9
 RSI_OVERBOUGHT = 70
 RSI_OVERSOLD = 30
 
@@ -48,6 +51,7 @@ CLOSE_WIDTH = 1.1
 SMA111_COLOR = "#E15FC3"
 SMA50_COLOR = "#00D118"
 RSI_COLOR = "#FF9900"
+RSI_MA_COLOR = "#9467bd"
 # ====================================================
 
 
@@ -107,6 +111,15 @@ def add_rsi(df: pd.DataFrame, window: int = 14, price_col: str = "close", out_co
     return df
 
 
+def add_rsi_ema(rsi: pd.Series, span: int = RSI_MA_DAYS) -> pd.Series:
+    """Recursive EMA of RSI. Does not recompute RSI on smoothed price."""
+    return rsi.ewm(
+        span=span,
+        min_periods=max(5, span // 2),
+        adjust=False,
+    ).mean()
+
+
 def _require_daily(symbol: str) -> pd.DataFrame:
     path = daily_cache_path(symbol)
     raw = load_daily(symbol)
@@ -139,6 +152,7 @@ def draw_one_chart(
     df = add_sma(df, window=SMA_SLOW, out_col=slow_col)
     df = add_sma(df, window=SMA_FAST, out_col=fast_col)
     df = add_rsi(df, window=RSI_WINDOW)
+    df["RSI_EMA"] = add_rsi_ema(df["RSI"], span=RSI_MA_DAYS)
 
     if DAYS_BACK is not None:
         df = df.iloc[-DAYS_BACK:]
@@ -157,7 +171,10 @@ def draw_one_chart(
     ax1.plot(df.index, df[slow_col], label=f"{SMA_SLOW}-Day SMA", linewidth=0.95, color=SMA111_COLOR)
     ax1.plot(df.index, df[fast_col], label=f"{SMA_FAST}-Day SMA", linewidth=0.95, color=SMA50_COLOR)
 
-    title = f"{coin_name} • {SMA_SLOW}-Day SMA vs {SMA_FAST}-Day SMA + RSI({RSI_WINDOW})"
+    title = (
+        f"{coin_name} • {SMA_SLOW}-Day SMA vs {SMA_FAST}-Day SMA"
+        f" + RSI({RSI_WINDOW})/EMA{RSI_MA_DAYS}"
+    )
     if DAYS_BACK:
         title += f" — Last {DAYS_BACK} days"
     ax1.set_title(title, fontsize=14, pad=16)
@@ -167,7 +184,16 @@ def draw_one_chart(
     if SHOW_GRID:
         ax1.grid(True, alpha=0.3)
 
-    ax2.plot(df.index, df["RSI"], color=RSI_COLOR, linewidth=1.5, label=f"RSI({RSI_WINDOW})")
+    ax2.plot(
+        df.index, df["RSI"],
+        color=RSI_COLOR, linewidth=1.2, alpha=0.8,
+        label=f"RSI({RSI_WINDOW})",
+    )
+    ax2.plot(
+        df.index, df["RSI_EMA"],
+        color=RSI_MA_COLOR, linewidth=1.6,
+        label=f"RSI {RSI_MA_DAYS}d EMA",
+    )
     ax2.axhline(RSI_OVERBOUGHT, color="#E15FC3", linestyle="--", alpha=0.6, label=f"Overbought ({RSI_OVERBOUGHT})")
     ax2.axhline(RSI_OVERSOLD, color="#00D118", linestyle="--", alpha=0.6, label=f"Oversold ({RSI_OVERSOLD})")
     ax2.axhline(50, color="gray", linestyle=":", alpha=0.5, label="Midline (50)")
@@ -184,7 +210,10 @@ def draw_one_chart(
     ax1.tick_params(axis="x", labelbottom=False)
     fig.tight_layout()
 
-    print(f"Drawing {coin_name} chart with {SMA_SLOW}/{SMA_FAST} SMAs + RSI({RSI_WINDOW})...")
+    print(
+        f"Drawing {coin_name} chart with {SMA_SLOW}/{SMA_FAST} SMAs"
+        f" + RSI({RSI_WINDOW})/EMA{RSI_MA_DAYS}..."
+    )
 
     if not _backend_is_interactive():
         safe = coin_ticker.lower().replace(" ", "_")
