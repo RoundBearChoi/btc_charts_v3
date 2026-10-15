@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""KOSPI moving-average chart.
+"""KOSPI moving-average chart with RSI.
 
-Fetches daily KOSPI (KS11) via FinanceDataReader, computes SMAs on a
-slightly longer history so the longest window is seeded, then draws
+Fetches daily KOSPI (KS11) via FinanceDataReader, computes SMAs and RSI
+on a slightly longer history so the longest window is seeded, then draws
 the last DAYS_BACK trading days.
 
 Config lives at the top. No coin menu — this is KOSPI-only.
@@ -31,10 +31,19 @@ DAYS_BACK = 360 * 2
 SMA_WINDOWS = [20, 50, 111, 200]
 BLOCK_WINDOW = True
 SHOW_GRID = True
-FIGURE_SIZE = (14, 8)
+FIGURE_SIZE = (14, 9)
+HEIGHT_RATIOS = (3, 1)
+
+RSI_WINDOW = 14
+RSI_MA_DAYS = 9
+RSI_OVERBOUGHT = 70
+RSI_OVERSOLD = 30
+
 CLOSE_COLOR = "#9EB3DB"
 CLOSE_WIDTH = 1.1
 SMA_COLORS = ["#E15FC3", "#00D118", "#FF9900", "#C80C01"]
+RSI_COLOR = "#FF9900"
+RSI_MA_COLOR = "#9467bd"
 # ====================================================
 
 
@@ -74,6 +83,32 @@ def add_sma(df: pd.DataFrame, window: int, price_col: str = "close") -> pd.DataF
     return df
 
 
+def add_rsi(df: pd.DataFrame, window: int = 14, price_col: str = "close", out_col: str = "RSI") -> pd.DataFrame:
+    delta = df[price_col].diff()
+    gain = delta.where(delta > 0, 0.0)
+    loss = (-delta).where(delta < 0, 0.0)
+    avg_gain = gain.rolling(window=window, min_periods=window).mean()
+    avg_loss = loss.rolling(window=window, min_periods=window).mean()
+    for i in range(window, len(df)):
+        avg_gain.iloc[i] = (avg_gain.iloc[i - 1] * (window - 1) + gain.iloc[i]) / window
+        avg_loss.iloc[i] = (avg_loss.iloc[i - 1] * (window - 1) + loss.iloc[i]) / window
+    avg_loss_safe = avg_loss.replace(0, np.nan)
+    rsi = 100 - (100 / (1 + avg_gain / avg_loss_safe))
+    rsi = rsi.mask((avg_loss == 0) & (avg_gain > 0), 100.0)
+    rsi = rsi.mask((avg_loss == 0) & (avg_gain == 0), 50.0)
+    df[out_col] = rsi
+    return df
+
+
+def add_rsi_ema(rsi: pd.Series, span: int = RSI_MA_DAYS) -> pd.Series:
+    """Recursive EMA of RSI. Does not recompute RSI on smoothed price."""
+    return rsi.ewm(
+        span=span,
+        min_periods=max(5, span // 2),
+        adjust=False,
+    ).mean()
+
+
 def fetch_kospi(days_back: int, max_sma: int) -> pd.DataFrame:
     """Fetch enough history so the longest SMA is fully seeded."""
     # Extra calendar days to cover weekends/holidays + SMA warmup
@@ -98,6 +133,8 @@ def fetch_kospi(days_back: int, max_sma: int) -> pd.DataFrame:
 def print_snapshot(df: pd.DataFrame) -> None:
     last = df.iloc[-1]
     price = float(last["close"])
+    rsi = float(last["RSI"]) if "RSI" in df.columns and pd.notna(last["RSI"]) else float("nan")
+    rsi_ema = float(last["RSI_EMA"]) if "RSI_EMA" in df.columns and pd.notna(last["RSI_EMA"]) else float("nan")
     print("=" * 56)
     print(f"KOSPI snapshot  {df.index[-1].date()}")
     print("=" * 56)
@@ -113,6 +150,11 @@ def print_snapshot(df: pd.DataFrame) -> None:
         ma = float(last[col])
         pct = (price - ma) / ma * 100 if ma else float("nan")
         print(f"SMA{w:<7}{format_price(ma):>12}{pct:+10.1f}%")
+    print()
+    rsi_txt = f"{rsi:.1f}" if pd.notna(rsi) else "n/a"
+    rsi_ema_txt = f"{rsi_ema:.1f}" if pd.notna(rsi_ema) else "n/a"
+    print(f"RSI({RSI_WINDOW}):       {rsi_txt}")
+    print(f"RSI {RSI_MA_DAYS}d EMA:     {rsi_ema_txt}")
     print("=" * 56)
     print()
 
@@ -123,6 +165,8 @@ def draw(block_window: bool = BLOCK_WINDOW) -> None:
 
     for w in SMA_WINDOWS:
         df = add_sma(df, w)
+    df = add_rsi(df, window=RSI_WINDOW)
+    df["RSI_EMA"] = add_rsi_ema(df["RSI"], span=RSI_MA_DAYS)
 
     if DAYS_BACK is not None:
         df = df.iloc[-DAYS_BACK:]
@@ -131,10 +175,15 @@ def draw(block_window: bool = BLOCK_WINDOW) -> None:
 
     print_snapshot(df)
 
-    fig, ax = plt.subplots(figsize=FIGURE_SIZE)
+    fig, (ax1, ax2) = plt.subplots(
+        2, 1,
+        figsize=FIGURE_SIZE,
+        gridspec_kw={"height_ratios": list(HEIGHT_RATIOS)},
+        sharex=True,
+    )
     plt.style.use("fast")
 
-    ax.plot(
+    ax1.plot(
         df.index,
         df["close"],
         label="KOSPI Close",
@@ -146,7 +195,7 @@ def draw(block_window: bool = BLOCK_WINDOW) -> None:
     for i, w in enumerate(SMA_WINDOWS):
         col = f"SMA{w}"
         color = SMA_COLORS[i % len(SMA_COLORS)]
-        ax.plot(
+        ax1.plot(
             df.index,
             df[col],
             label=f"{w}-Day SMA",
@@ -155,17 +204,40 @@ def draw(block_window: bool = BLOCK_WINDOW) -> None:
             zorder=4,
         )
 
-    title = "KOSPI • Moving Averages"
+    title = f"KOSPI • Moving Averages + RSI({RSI_WINDOW})"
     if DAYS_BACK:
         title += f" — Last {DAYS_BACK} days"
-    ax.set_title(title, fontsize=14, pad=16)
-    ax.set_ylabel("Index")
-    ax.legend(loc="upper left", fontsize=9, framealpha=0.92)
-    ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _p: format_price(x)))
+    ax1.set_title(title, fontsize=14, pad=16)
+    ax1.set_ylabel("Index")
+    ax1.legend(loc="upper left", fontsize=9, framealpha=0.92)
+    ax1.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _p: format_price(x)))
     if SHOW_GRID:
-        ax.grid(True, alpha=0.3)
+        ax1.grid(True, alpha=0.3)
 
-    add_month_date_formatters(ax)
+    ax2.plot(
+        df.index, df["RSI"],
+        color=RSI_COLOR, linewidth=1.2, alpha=0.8,
+        label=f"RSI({RSI_WINDOW})",
+    )
+    ax2.plot(
+        df.index, df["RSI_EMA"],
+        color=RSI_MA_COLOR, linewidth=1.6,
+        label=f"RSI {RSI_MA_DAYS}d EMA",
+    )
+    ax2.axhline(RSI_OVERBOUGHT, color="#E15FC3", linestyle="--", alpha=0.6, label=f"Overbought ({RSI_OVERBOUGHT})")
+    ax2.axhline(RSI_OVERSOLD, color="#00D118", linestyle="--", alpha=0.6, label=f"Oversold ({RSI_OVERSOLD})")
+    ax2.axhline(50, color="gray", linestyle=":", alpha=0.5, label="Midline (50)")
+    ax2.set_ylabel("RSI")
+    ax2.set_ylim(0, 100)
+    ax2.set_xlabel("Date")
+    ax2.legend(loc="upper left", fontsize=8, framealpha=0.92)
+    if SHOW_GRID:
+        ax2.grid(True, alpha=0.3)
+
+    add_month_date_formatters(ax1)
+    add_month_date_formatters(ax2)
+    plt.setp(ax1.get_xticklabels(), visible=False)
+    ax1.tick_params(axis="x", labelbottom=False)
     fig.tight_layout()
 
     if not _backend_is_interactive():
