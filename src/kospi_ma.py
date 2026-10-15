@@ -27,7 +27,7 @@ from datetime import datetime, timedelta
 import FinanceDataReader as fdr
 
 # ====================== CONFIG ======================
-DAYS_BACK = 360 * 3          # visible window (trading days, approx)
+DAYS_BACK = 360 * 2
 SMA_WINDOWS = [20, 50, 111, 200]
 BLOCK_WINDOW = True
 SHOW_GRID = True
