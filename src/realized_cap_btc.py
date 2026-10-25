@@ -10,8 +10,6 @@ Config at top controls the lookback window.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import matplotlib.ticker as mticker
@@ -29,6 +27,17 @@ PRICE_COLOR = "#ff7f0e"
 PRICE_WIDTH = 1.0
 
 
+def _naive_day_index(df: pd.DataFrame) -> pd.DataFrame:
+    """Force a naive UTC-midnight DatetimeIndex so joins don't fail on tz."""
+    out = df.copy()
+    idx = pd.to_datetime(out.index)
+    if getattr(idx, "tz", None) is not None:
+        idx = idx.tz_convert("UTC").tz_localize(None)
+    out.index = idx.floor("D")
+    out.index.name = "time"
+    return out[~out.index.duplicated(keep="last")].sort_index()
+
+
 def load_price() -> pd.DataFrame:
     path = daily_cache_path("BTC")
     if not path.exists():
@@ -36,7 +45,7 @@ def load_price() -> pd.DataFrame:
             f"No BTC daily price cache at {path}. "
             "Run analyst_get_daily_data.py or demo_get_daily_data.py first."
         )
-    return load_daily("BTC")
+    return _naive_day_index(load_daily("BTC"))
 
 
 def plot(df: pd.DataFrame) -> None:
@@ -73,7 +82,7 @@ def plot(df: pd.DataFrame) -> None:
 
 
 def main() -> None:
-    rcap = load_realized_cap()
+    rcap = _naive_day_index(load_realized_cap())
     if rcap.empty:
         raise SystemExit(
             "No realized cap cache. Run src/cm_get_realized_cap.py first."
