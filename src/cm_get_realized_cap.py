@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Download Coin Metrics community BTC data and cache realized cap.
 
-Source (public, updated daily):
-    https://raw.githubusercontent.com/coinmetrics/data/master/csv/btc.csv
+Source (free community API, no key):
+    https://community-api.coinmetrics.io/v4
 
 Computes:
     realized_cap = CapMrktCurUSD / CapMVRVCur
@@ -16,14 +16,15 @@ Re-run anytime to refresh. No API key needed.
 
 from __future__ import annotations
 
-from io import StringIO
 from pathlib import Path
 
 import pandas as pd
 import requests
 
 # --- config ---
-CM_BTC_URL = "https://raw.githubusercontent.com/coinmetrics/data/master/csv/btc.csv"
+CM_BASE = "https://community-api.coinmetrics.io/v4"
+METRICS = "CapMrktCurUSD,CapMVRVCur,PriceUSD"
+PAGE_SIZE = 10000
 REQUEST_TIMEOUT = 60
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -33,31 +34,65 @@ RCAP_CACHE = DATA_DIR / "BTC_realized_cap_daily.csv"
 KEEP_COLS = ["realized_cap", "CapMrktCurUSD", "CapMVRVCur", "PriceUSD"]
 
 
-def fetch_coinmetrics_btc() -> pd.DataFrame:
-    """Download the full community CSV and compute realized_cap."""
-    print(f"Downloading {CM_BTC_URL}")
-    resp = requests.get(CM_BTC_URL, timeout=REQUEST_TIMEOUT)
+def _fetch_page(next_page_token: str | None = None) -> dict:
+    params = {
+        "assets": "btc",
+        "metrics": METRICS,
+        "frequency": "1d",
+        "page_size": PAGE_SIZE,
+    }
+    if next_page_token:
+        params["next_page_token"] = next_page_token
+
+    url = f"{CM_BASE}/timeseries/asset-metrics"
+    resp = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
     resp.raise_for_status()
+    return resp.json()
 
-    cm = pd.read_csv(StringIO(resp.text), parse_dates=["time"])
-    cm = cm.set_index("time").sort_index()
-    cm.index = cm.index.floor("D")
-    cm.index.name = "time"
 
-    # realized_cap only where both inputs exist and MVRV is positive
+def fetch_coinmetrics_btc() -> pd.DataFrame:
+    """Paginate the community API and compute realized_cap."""
+    print(f"Fetching from {CM_BASE}")
+    rows = []
+    token = None
+    page = 0
+
+    while True:
+        page += 1
+        payload = _fetch_page(token)
+        data = payload.get("data") or []
+        rows.extend(data)
+        print(f"  page {page}: {len(data)} rows (total {len(rows)})")
+
+        token = payload.get("next_page_token")
+        if not token:
+            break
+
+    if not rows:
+        raise RuntimeError("Coin Metrics community API returned no data")
+
+    df = pd.DataFrame(rows)
+    df["time"] = pd.to_datetime(df["time"]).dt.floor("D")
+    df = df.set_index("time").sort_index()
+    df.index.name = "time"
+
+    # drop duplicate days if any
+    df = df[~df.index.duplicated(keep="last")]
+
+    for col in ["CapMrktCurUSD", "CapMVRVCur", "PriceUSD"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
     mask = (
-        cm["CapMrktCurUSD"].notna()
-        & cm["CapMVRVCur"].notna()
-        & (cm["CapMVRVCur"] > 0)
+        df["CapMrktCurUSD"].notna()
+        & df["CapMVRVCur"].notna()
+        & (df["CapMVRVCur"] > 0)
     )
-    out = cm.loc[mask].copy()
+    out = df.loc[mask].copy()
     out["realized_cap"] = out["CapMrktCurUSD"] / out["CapMVRVCur"]
 
-    # keep only the columns we care about
     available = [c for c in KEEP_COLS if c in out.columns]
-    out = out[available]
-
-    return out
+    return out[available]
 
 
 def save_realized_cap(df: pd.DataFrame) -> Path:
