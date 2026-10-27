@@ -8,7 +8,7 @@ Computes:
     realized_cap = CapMrktCurUSD / CapMVRVCur
 
 On disk:
-    src/cg_data/BTC_realized_cap_daily.csv
+    src/cm_data/BTC_realized_cap_daily.csv
         time, realized_cap, CapMrktCurUSD, CapMVRVCur, PriceUSD
 
 Re-run anytime to refresh. No API key needed.
@@ -28,7 +28,7 @@ PAGE_SIZE = 10000
 REQUEST_TIMEOUT = 60
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-DATA_DIR = SCRIPT_DIR / "cg_data"
+DATA_DIR = SCRIPT_DIR / "cm_data"
 RCAP_CACHE = DATA_DIR / "BTC_realized_cap_daily.csv"
 
 KEEP_COLS = ["realized_cap", "CapMrktCurUSD", "CapMVRVCur", "PriceUSD"]

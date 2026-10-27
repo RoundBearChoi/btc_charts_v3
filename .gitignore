@@ -142,6 +142,7 @@ fabric.properties
 *.csv#
 !src/coins.csv
 src/cg_data/
+src/cm_data/
 src/coingecko_data/
 src/spot_etf_data/
 

@@ -3,7 +3,8 @@
 
 Realized cap (top) and price (bottom).
 Uses local cache produced by src/cm_get_realized_cap.py
-and daily price cache from CoinGecko.
+(stored in src/cm_data/BTC_realized_cap_daily.csv)
+and daily price cache from CoinGecko (src/cg_data/).
 
 Config at top controls the lookback window.
 """
